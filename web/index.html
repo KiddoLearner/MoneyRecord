@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Record your consumption.">
+
+  <!-- PWA / iOS -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="white">
+  <meta name="apple-mobile-web-app-title" content="MoneyRecord">
+  <link rel="apple-touch-icon" href="icons/MoneyIcon.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="MoneyIcon.png"/>
+
+  <title>MoneyRecord</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* Storage status toast: shown after checking or requesting browser persistence. */
+    #storage-status-toast {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      z-index: 100000;
+      display: none;
+      padding: 14px 16px;
+      border-radius: 10px;
+      background: #323232;
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+      font-family: Arial, sans-serif;
+    }
+
+    #pwa-update-toast {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      z-index: 99999;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: #323232;
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+      font-family: Arial, sans-serif;
+    }
+
+    #pwa-update-toast .actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #pwa-update-toast button {
+      border: none;
+      border-radius: 10px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    #pwa-update-refresh {
+      background: #02569B;
+      color: white;
+      font-weight: bold;
+    }
+
+    #pwa-update-close {
+      background: rgba(255, 255, 255, 0.12);
+      color: white;
+    }
+
+    @media (max-width: 600px) {
+      #pwa-update-toast {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      #pwa-update-toast .actions {
+        width: 100%;
+      }
+
+      #pwa-update-toast button {
+        flex: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="pwa-update-toast">
+    <div>有新版本，請點擊更新</div>
+    <div class="actions">
+      <button id="pwa-update-close">稍後</button>
+      <button id="pwa-update-refresh">更新</button>
+    </div>
+  </div>
+  <!-- Toast text is updated by the storage status script below. -->
+  <div id="storage-status-toast" role="status" aria-live="polite"></div>
+
+  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    (() => {
+      const storage = 'storage' in navigator? navigator.storage : null;
+      const toast = document.getElementById('storage-status-toast');
+      let storageCheckComplete = false;
+      let persistenceRequestStarted = false;
+      let toastTimer;
+
+      const STORAGE_TOAST_SHOWN_KEY = 'stort_success_toast_shown';
+      function hasShownSuccessToast(){return localStorage.getItem(stort_success_toast_shown) ==='true';}
+      function markSuccessToastAsShown(){return localStorage.setItem(stort_success_toast_shown,true);}
+
+      // Show a short, accessible status message without blocking app use.
+      function showStorageToast(message) {
+        toast.textContent = message;
+        toast.style.display = 'block';
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => {
+          toast.style.display = 'none';
+        }, 4500);
+      }
+
+      // Request persistence directly from the user's click handler so browsers
+      // that require user activation can consider the request.
+      async function requestStoragePersistence() {
+        persistenceRequestStarted = true;
+        document.removeEventListener('click', onFirstUserClick);
+
+        try {
+          if(!storage){showStorageToast('此瀏覽器不支援瀏覽器儲存保護'); return;}
+          if(typeof storage.persist !== 'function'){showStorageToast('此瀏覽器不支援永久儲存申請'); return;}
+          const granted = await storage.persist();
+          console.log('[Storage] 永久儲存申請結果: ' + granted);
+          if (granted) {
+            if(!hasShownSuccessToast){
+              showStorageToast('已成功取得瀏覽器永久儲存狀態');
+            }
+          } else {
+            showStorageToast('瀏覽器未批准永久儲存，重要資料請定期備份');
+          }
+        } catch (error) {
+          console.warn('[Storage] 無法申請永久儲存:', error);
+          showStorageToast('無法取得永久儲存狀態，重要資料請定期備份');
+        }
+      }
+
+      // Request only after the startup check confirms persistence is not active.
+      function onFirstUserClick() {
+        if (!storageCheckComplete || persistenceRequestStarted) return;
+        void requestStoragePersistence();
+      }
+
+      // Check the browser's current persistence state each time the PWA opens.
+      async function checkStoragePersistenceOnStartup() {
+        if (!storage || typeof storage.persisted !== 'function') {
+          storageCheckComplete = true;
+          document.removeEventListener('click', onFirstUserClick);
+          console.info('[Storage] 此瀏覽器不支援 persisted()');
+          showStorageToast('此瀏覽器不支援檢查永久儲存狀態');
+          return;
+        }
+
+        try {
+          const isPersisted = await storage.persisted();
+          console.log('[Storage] 啟動時永久儲存狀態: ' + isPersisted);
+          storageCheckComplete = true;
+
+          //Dont wanna toast everytime when open app
+          // if (isPersisted) {
+          //   document.removeEventListener('click', onFirstUserClick);
+          //   showStorageToast('此裝置已啟用瀏覽器永久儲存');
+          //   return;
+          // }
+
+          if (!storage || typeof storage.persist !== 'function') {
+            document.removeEventListener('click', onFirstUserClick);
+            showStorageToast('瀏覽器不支援永久儲存申請，重要資料請定期備份');
+          }
+        } catch (error) {
+          storageCheckComplete = true;
+          document.removeEventListener('click', onFirstUserClick);
+          console.warn('[Storage] 無法檢查永久儲存狀態:', error);
+          showStorageToast('無法檢查永久儲存狀態，重要資料請定期備份');
+        }
+      }
+
+      // Listen before the asynchronous check; early taps are ignored, not consumed.
+      document.addEventListener('click', onFirstUserClick);
+      void checkStoragePersistenceOnStartup();
+    })();
+  </script>
+  
+  <script>
+    (() => {
+      let refreshing = false;
+      let updateShown = false;
+      let waitingWorker = null;
+
+      function showUpdateToast(worker) {
+        if (updateShown) return;
+        updateShown = true;
+        waitingWorker = worker;
+
+        const toast = document.getElementById('pwa-update-toast');
+        const refreshBtn = document.getElementById('pwa-update-refresh');
+        const closeBtn = document.getElementById('pwa-update-close');
+
+        toast.style.display = 'flex';
+
+        refreshBtn.onclick = async () => {
+          try {
+            if (waitingWorker) {
+              waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+            } else {
+              window.location.reload();
+            }
+          } catch (e) {
+            window.location.reload();
+          }
+        };
+
+        closeBtn.onclick = () => {
+          toast.style.display = 'none';
+        };
+      }
+
+      async function watchForUpdates() {
+        if (!('serviceWorker' in navigator)) return;
+
+        // 等 Flutter bootstrap 有時間完成 SW 註冊
+        window.setTimeout(async () => {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (!reg) return;
+
+          // 如果新 SW 已經喺 waiting，直接顯示提示
+          if (reg.waiting && navigator.serviceWorker.controller) {
+            showUpdateToast(reg.waiting);
+          }
+
+          // 監聽新 SW 安裝
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+
+            newWorker.addEventListener('statechange', () => {
+              if (
+                newWorker.state === 'installed' &&
+                navigator.serviceWorker.controller
+              ) {
+                showUpdateToast(newWorker);
+              }
+            });
+          });
+
+          // 主動檢查一次更新
+          try {
+            await reg.update();
+          } catch (_) {}
+        }, 1500);
+
+        // 新 SW 接管後自動 refresh
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
+      }
+
+      window.addEventListener('load', watchForUpdates);
+    })();
+  </script>
+</body>
+</html>
